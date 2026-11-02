@@ -1,0 +1,60 @@
+name: Build Backtrack VST3
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build engine tests
+        run: cmake --build build --config Release --target engine_test
+
+      - name: Run engine tests
+        run: build\Release\engine_test.exe
+
+      - name: Build VST3
+        run: cmake --build build --config Release --target Backtrack_VST3 --parallel
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Recurse "build/Backtrack_artefacts/Release/VST3/Backtrack.vst3" dist/
+          Copy-Item README.md dist/
+          Compress-Archive -Path dist/* -DestinationPath Backtrack-VST3-Windows.zip -Force
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Backtrack-VST3-Windows
+          path: dist/
+
+      - name: Move the tag to this commit
+        shell: bash
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
+      - name: Update the "latest" download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Backtrack (latest build)
+          prerelease: true
+          make_latest: false
+          body: |
+            Latest Windows VST3 build of Backtrack from commit ${{ github.sha }}.
+            Download Backtrack-VST3-Windows.zip, unzip it and copy Backtrack.vst3 into C:\Program Files\Common Files\VST3.
+          files: Backtrack-VST3-Windows.zip
+
