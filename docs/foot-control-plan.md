@@ -1,42 +1,31 @@
-# Backtrack foot control plan
+# Backtrack foot control
 
-Written 4 November 2026 from a cross-plugin audit. Build it in Backtrack's own thread.
+Approved 6 November 2026 and built in v0.2. This replaces the 4 November plan. The Launchpad mapping is gone.
 
-## What happens today
-
-- No MIDI CC handling at all. Only Launchpad notes reach the plugin, so footswitches and the expression pedal do nothing.
-- The EXP parameter and EXP assign (Knob 1 to 3) exist, but only Ableton mapping can move EXP.
-- The Launchpad uses notes, so it won't clash with any of this. Keep it as it is.
-
-## Footswitch defaults
+## Footswitches
 
 | Footswitch | Tap | Hold |
 | --- | --- | --- |
-| A | On or off | Momentary: plays while held (soft down and up) |
-| B | Hold the loop | Stop and clear |
-| C | Flip DIR 1 forwards or backwards | Transcend on or off |
-| D | Next mode (1, 2, 3) | Switch bank |
-| A+B | Spare, free for Learn | |
-| C+D held 1 second | Keeper | |
+| A | On and off (smooth, trails per preset) | Transcend |
+| B | Soft switch: jump the head (Mode 1), stop and clear (Modes 2 and 3), freeze (Nightly) | Acts on press: freeze while held (Mode 1), sample (Mode 2), record then overdub (Mode 3) |
+| C | Reverse every head (acts on press) | Reverse while held |
+| D | Next preset | Previous preset |
+| A+B | Next mode (acts when both are released) | Held 1 s: Standard or Nightly |
+| C+D | Footswitches to the next Backtrack | Held 1 s: Keeper |
 
-## Expression default
+- A press that turns out to be half of a combo is undone (B's recording or freeze, C's reverse).
+- Classic layout: A on and off, B soft switch, C and D free. Combos stay.
+- Timings: hold 0.45 s, combo window 0.12 s, combo hold 1 s. Looper presses debounce at 80 ms.
 
-Drives EXP. Moving the pedal turns EXP active, and EXP assign keeps choosing Knob 1, 2 or 3, matching the Count to Five's E switch. Mode 3's existing rule (EXP always drives DIR 1) stays.
+## Expression
 
-## How to build it
+- Each preset stores a target (expTarget) and a heel and toe setting (expLo, expHi) on the target's own scale.
+- Targets: DIR 1, DIR 2, DIR 3, all heads, LEN B, LEN S, FBK, RAND, MIX, LFO depth, slice fade, step variance, stutter length, vibrato depth.
+- Pitch sweeps glide through the engine's 30 ms speed slew. With Q on they step through the scale.
+- Smoothing OFF, LOW or HIGH, plus calibration and curve, all shared through Flip Fella Pedals.xml.
 
-Prism Patch is the reference. Its foot control already follows the house rules, and its Pedal page design is already approved, so reuse it rather than drawing a new one.
+## Shared settings
 
-1. **Shared module.** Copy `Source/PedalControl.h` and `Source/PedalControl.cpp` from kevinwkaye/prism--patch, unchanged apart from the ComboHold addition below. Settings live in the shared `Flip Fella Pedals.xml`, so a setup made in one plugin works in all of them.
-2. **Combo hold.** Add a `ComboHoldAB` / `ComboHoldCD` event to `FootswitchLogic`: fire it when both switches of a combo stay down for 1 second. A combo tap keeps firing on press as now. Hold C+D for 1 second is reserved for Keeper in every plugin. If Prism Patch has already added this, copy its version.
-3. **MIDI routing.** In `handleMidi`, offer every message to the pedal code first. A footswitch or expression message on its learned channel and CC is consumed there and goes no further. Notes, pitch bend and program changes carry on as before.
-4. **Original pedal MIDI map.** Move the existing CC chart behind an "Original pedal MIDI map" channel setting on the Pedal page, off by default, exactly as Prism Patch does. This is what stops footswitches A to D and the expression pedal colliding with the chart.
-5. **Pedal page.** Four footswitch flip cards showing Tap and Hold jobs, what each listens for, Learn and Defaults. An expression bar with target, Calibrate heel and toe, Learn, curve and smoothing.
-6. **On-screen buttons.** Every footswitch job also has a button on the main page, so friends without pedals miss nothing.
-7. **Pebble.** Taps its foot on a press, leans with the expression pedal.
-8. **Keeper.** Hold C+D for 1 second runs Keeper. If Keeper isn't built in this plugin yet, reserve the combo and leave it silent.
-9. **No brand names** anywhere in the UI. Use "Footswitches", "Footswitch A to D" and "Expression".
-10. **README.** Copy Prism Patch's "Footswitches and expression (optional)" and "Getting footswitch MIDI to the plugin in Ableton" sections, with this plugin's table.
-11. **Tests.** Tap, hold, A+B and C+D combos from plain 127/0 messages. A clash test: CC 20, 21, 22, 23 and 11 on channel 16 change nothing except the jobs in the table, with the original pedal map both off and on a different channel.
-
-The defaults in the table are proposals based on the original pedal's footswitches. Kevin can change any of them before the build.
+- PedalControl and Keeper are copied from Prism Patch.
+- PedalSettings::save() now keeps attributes it doesn't know, so plugins don't wipe each other's settings. Backtrack adds backtrackLayout and expSmooth.
+- The Count to 5 has no MIDI, so there's no original MIDI map channel for Backtrack.

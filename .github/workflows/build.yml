@@ -9,8 +9,30 @@ permissions:
   contents: write
 
 jobs:
+  # The DSP core on Linux ARM64: sound tests and the CPU report
+  linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the engine tests
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra tests/engine_test.cpp -o engine_test
+          g++ -std=c++17 -O2 tests/cpu_report.cpp -o cpu_report
+
+      - name: Sound and behaviour tests
+        run: ./engine_test
+
+      - name: CPU per instance at 48 kHz
+        run: |
+          echo "### CPU per instance, Linux ARM64, 48 kHz" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ./cpu_report | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
   windows:
     runs-on: windows-latest
+    needs: linux-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -18,10 +40,19 @@ jobs:
         run: cmake -S . -B build -A x64
 
       - name: Build engine tests
-        run: cmake --build build --config Release --target engine_test
+        run: cmake --build build --config Release --target engine_test cpu_report
 
-      - name: Run engine tests
+      - name: Sound and behaviour tests
         run: build\Release\engine_test.exe
+
+      - name: CPU per instance at 48 kHz
+        shell: bash
+        run: |
+          build/Release/cpu_report.exe | tee cpu-report.txt
+          echo "### CPU per instance, Windows x64, 48 kHz" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat cpu-report.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Build VST3
         run: cmake --build build --config Release --target Backtrack_VST3 --parallel
@@ -32,19 +63,28 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item -Recurse "build/Backtrack_artefacts/Release/VST3/Backtrack.vst3" dist/
           Copy-Item README.md dist/
+          Copy-Item cpu-report.txt dist/
           Compress-Archive -Path dist/* -DestinationPath Backtrack-VST3-Windows.zip -Force
-
-      - name: Upload build
-        uses: actions/upload-artifact@v4
-        with:
-          name: Backtrack-VST3-Windows
-          path: dist/
 
       - name: Move the tag to this commit
         shell: bash
         run: |
           git tag -f latest
           git push -f origin latest
+
+      - name: Release notes
+        shell: bash
+        run: |
+          {
+            echo "Latest Windows VST3 build of Backtrack from commit ${{ github.sha }}."
+            echo ""
+            echo "Download Backtrack-VST3-Windows.zip, unzip it and copy Backtrack.vst3 into C:\\Program Files\\Common Files\\VST3."
+            echo ""
+            echo "CPU per instance at 48 kHz (share of one core on the build machine):"
+            echo '```'
+            cat cpu-report.txt
+            echo '```'
+          } > notes.md
 
       - name: Update the "latest" download
         uses: softprops/action-gh-release@v2
@@ -53,8 +93,5 @@ jobs:
           name: Backtrack (latest build)
           prerelease: true
           make_latest: false
-          body: |
-            Latest Windows VST3 build of Backtrack from commit ${{ github.sha }}.
-            Download Backtrack-VST3-Windows.zip, unzip it and copy Backtrack.vst3 into C:\Program Files\Common Files\VST3.
+          body_path: notes.md
           files: Backtrack-VST3-Windows.zip
-

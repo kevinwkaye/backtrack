@@ -14,11 +14,6 @@ static void pump (BacktrackProcessor& p, int blocks, float freq = 330.0f)
     }
 }
 
-static void set (BacktrackProcessor& p, const juce::String& id, float v)
-{
-    p.apvts.getParameter (id)->setValueNotifyingHost (v);
-}
-
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -27,10 +22,12 @@ int main (int argc, char** argv)
     proc.prepareToPlay (48000.0, 512);
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     ed->setVisible (true);
+    auto* bed = dynamic_cast<BacktrackEditor*> (ed.get());
+    auto run = [] (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); };
 
     auto shot = [&] (const juce::String& name)
     {
-        juce::MessageManager::getInstance()->runDispatchLoopUntil (700);
+        run (700);
         auto img = ed->createComponentSnapshot (ed->getLocalBounds());
         juce::PNGImageFormat png;
         juce::FileOutputStream os (outDir.getChildFile (name + ".png"));
@@ -38,22 +35,21 @@ int main (int argc, char** argv)
         png.writeImageToStream (img, os);
     };
 
-    set (proc, "quant", 1.0f);            // 5ths + 8va
-    set (proc, "dir1", 0.86f);
+    proc.loadPreset (5);                  // FIFTHS CLIMB
     pump (proc, 50);
-    shot ("mode1");
+    shot ("main_fifths");
 
-    set (proc, "mode", 1.0f);             // loop
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
-    proc.softDown(); pump (proc, 150); proc.softUp(); pump (proc, 20);
-    set (proc, "dir1", 0.2f);
-    pump (proc, 10);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
-    shot ("mode3");
+    proc.loadPreset (13);                 // THREE SPEEDS, a Mode 3 loop
+    run (100);
+    proc.footDown (1); run (50); pump (proc, 150); proc.footUp (1); run (50); pump (proc, 20);
+    shot ("main_loop");
 
-    set (proc, "bank", 1.0f);
-    set (proc, "mode", 0.5f);             // nightly stutter
+    proc.loadPreset (18);                 // AUTO STUTTER, Nightly
     pump (proc, 20);
-    shot ("nightly2");
+    proc.keepNow();
+    shot ("main_nightly");
+
+    bed->showPedalPage (true);
+    shot ("pedal_page");
     return 0;
 }

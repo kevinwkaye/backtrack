@@ -377,7 +377,7 @@ private:
 class Pebble : public juce::Component, private juce::Timer
 {
 public:
-    enum Mood { Idle, Recording, Reversing, PitchUp, PitchDown, Clipping, Asleep, Holding };
+    enum Mood { Idle, Recording, Reversing, PitchUp, PitchDown, Clipping, Asleep, Holding, FootTap, Kept };
 
     Pebble() { startTimerHz (60); }
 
@@ -411,6 +411,14 @@ public:
         }
         if (m == Reversing) rot = -juce::MathConstants<float>::twoPi * juce::jlimit (0.0f, 1.0f, et / 0.9f);
         if (m == Clipping) dx = 3.0f * std::sin (t * 60.0f);
+        if (m == FootTap) dy = -3.0f * (0.5f - 0.5f * std::cos (t * 2.4f));
+        if (m == Kept)
+        {
+            // two happy nods
+            const float k = std::sin (juce::jlimit (0.0f, 0.9f, et) / 0.45f * juce::MathConstants<float>::pi);
+            rot = juce::degreesToRadians (6.0f) * std::abs (k);
+            dy = 4.0f * std::abs (k);
+        }
 
         juce::Graphics::ScopedSaveState ss (g);
         g.addTransform (juce::AffineTransform::scale (sx, sy, 100.0f, 148.0f)
@@ -424,10 +432,21 @@ public:
         if (m == Reversing) glow = col::coral;
         if (m == PitchDown) glow = col::blue;
         if (m == Clipping) { glow = col::red; glowAlpha = 1.0f; }
+        if (m == Kept) { glow = col::green; glowAlpha = 0.8f; }
         if (m != Asleep)
         {
             g.setColour (glow.withAlpha (juce::jlimit (0.1f, 1.0f, glowAlpha)));
             g.drawEllipse (34, 44, 132, 112, 5.0f);
+        }
+
+        // FootTap: a little foot pats along with yours
+        if (m == FootTap)
+        {
+            juce::Graphics::ScopedSaveState fs (g);
+            const float pat = std::abs (std::sin (juce::jlimit (0.0f, 0.9f, et) / 0.3f * juce::MathConstants<float>::pi));
+            g.addTransform (juce::AffineTransform::rotation (-juce::degreesToRadians (25.0f) * pat, 116.0f, 150.0f));
+            g.setColour (col::blobShade);
+            g.fillEllipse (116, 143, 32, 14);
         }
 
         // Body
@@ -445,8 +464,19 @@ public:
         juce::Path mouth;
         switch (m)
         {
+            case Kept:
+            {
+                juce::Path happy;
+                happy.startNewSubPath (68, 96); happy.quadraticTo (80, 82, 92, 96);
+                happy.startNewSubPath (108, 96); happy.quadraticTo (120, 82, 132, 96);
+                stroke (happy, 5);
+                mouth.startNewSubPath (86, 116); mouth.quadraticTo (100, 132, 114, 116);
+                stroke (mouth, 6);
+                break;
+            }
             case Idle:
             case Holding:
+            case FootTap:
             {
                 const float blink = blinkAmount();
                 const auto pupil = transcend ? juce::Colour (0xff1f7a35) : dark;
@@ -547,7 +577,7 @@ private:
         if (event != Idle)
         {
             eventTime += dt;
-            const float len = event == Clipping ? 0.9f : 1.2f;
+            const float len = event == Clipping || event == FootTap ? 0.9f : 1.2f;
             if (eventTime > len) event = Idle;
         }
         nextBlink -= dt;
@@ -555,6 +585,151 @@ private:
         if (blinkT >= 0.0f) { blinkT += dt; if (blinkT > 0.16f) blinkT = -1.0f; }
         repaint();
     }
+};
+
+//==============================================================================
+// Chip that steps through a choice parameter (GRIT: OFF, 24-BIT, 12-BIT).
+class CycleChip : public juce::Component, private juce::Timer
+{
+public:
+    CycleChip (juce::AudioProcessorValueTreeState& s, const juce::String& paramId, juce::StringArray labels)
+        : param (s.getParameter (paramId)), names (std::move (labels)) { startTimerHz (20); }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const int i = index();
+        const bool on = i > 0;
+        g.setColour (on ? col::ink : col::line);
+        if (on) g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        else    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 2.0f);
+        label (g, names[i], r.toNearestInt(), 11.0f, on ? col::bg : col::ink, juce::Justification::centred);
+    }
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        const int n = names.size();
+        param->beginChangeGesture();
+        param->setValueNotifyingHost ((float) ((index() + 1) % n) / (float) (n - 1));
+        param->endChangeGesture();
+    }
+
+private:
+    juce::RangedAudioParameter* param;
+    juce::StringArray names;
+    int last = -1;
+    int index() const { return juce::jlimit (0, names.size() - 1, juce::roundToInt (param->getValue() * (float) (names.size() - 1))); }
+    void timerCallback() override { if (index() != last) { last = index(); repaint(); } }
+};
+
+//==============================================================================
+// Toggle pill with its own callback, for things that aren't parameters.
+class PillButton : public juce::Component
+{
+public:
+    std::function<void()> onClick;
+    void set (const juce::String& t, bool isOn, float textH = 12.0f)
+    {
+        if (t == text && isOn == on && textH == th) return;
+        text = t; on = isOn; th = textH; repaint();
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (on ? col::ink : col::line);
+        if (on) g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+        else    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 2.0f);
+        label (g, text, r.toNearestInt(), th, on ? col::bg : col::ink, juce::Justification::centred);
+    }
+    void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
+
+private:
+    juce::String text;
+    bool on = false;
+    float th = 12.0f;
+};
+
+//==============================================================================
+// One on-screen footswitch: letter, tap job, hold job. Press and release are reported,
+// so holding it on screen does exactly what holding the real footswitch does.
+class FootButton : public juce::Component
+{
+public:
+    std::function<void()> onPress, onRelease;
+
+    void set (const juce::String& l, const juce::String& tapJob, const juce::String& holdJob, bool lit, juce::Colour c)
+    {
+        if (l == letter && tapJob == tap && holdJob == hold && lit == on && c == colour) return;
+        letter = l; tap = tapJob; hold = holdJob; on = lit; colour = c;
+        repaint();
+    }
+    void setDown (bool d) { if (d != down) { down = d; repaint(); } }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        g.setColour (down ? col::ring : col::bg);
+        g.fillRoundedRectangle (r, 14.0f);
+        g.setColour (on || down ? colour : col::line);
+        g.drawRoundedRectangle (r, 14.0f, 2.0f);
+        auto in = getLocalBounds().reduced (12, 10);
+        g.setColour (on ? colour : col::dim);
+        g.setFont (font (26.0f, 0.02f));
+        g.drawText (letter, in.removeFromTop (28), juce::Justification::centredLeft);
+        in.removeFromTop (4);
+        label (g, tap, in.removeFromTop (18), 14.0f, col::ink);
+        in.removeFromTop (2);
+        label (g, "HOLD " + juce::String (juce::CharPointer_UTF8 ("\xc2\xb7 ")) + hold, in.removeFromTop (14), 10.0f, col::dim);
+    }
+    void mouseDown (const juce::MouseEvent&) override { setDown (true); if (onPress) onPress(); }
+    void mouseUp (const juce::MouseEvent&) override { setDown (false); if (onRelease) onRelease(); }
+
+private:
+    juce::String letter, tap, hold;
+    juce::Colour colour { col::ink };
+    bool on = false, down = false;
+};
+
+//==============================================================================
+// Thin horizontal slider with a teal thumb.
+class ThinSlider : public juce::Component
+{
+public:
+    std::function<void (float)> onChange;
+    void setValue (float v) { v = juce::jlimit (0.0f, 1.0f, v); if (std::abs (v - value) > 1.0e-4f) { value = v; repaint(); } }
+    float getValue() const { return value; }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        const float cy = r.getCentreY();
+        auto track = juce::Rectangle<float> (r.getX() + 6, cy - 3, r.getWidth() - 12, 6);
+        g.setColour (col::ring); g.fillRoundedRectangle (track, 3.0f);
+        g.setColour (col::teal); g.fillRoundedRectangle (track.withWidth (track.getWidth() * value), 3.0f);
+        g.fillEllipse (juce::Rectangle<float> (14, 14).withCentre ({ track.getX() + track.getWidth() * value, cy }));
+    }
+    void mouseDown (const juce::MouseEvent& e) override { drag (e); }
+    void mouseDrag (const juce::MouseEvent& e) override { drag (e); }
+
+private:
+    float value = 0.0f;
+    void drag (const juce::MouseEvent& e)
+    {
+        setValue ((e.position.x - 6.0f) / juce::jmax (1.0f, getWidth() - 12.0f));
+        if (onChange) onChange (value);
+    }
+};
+
+//==============================================================================
+// Text link in teal, for PEDAL PAGE and BACK.
+class LinkButton : public juce::Component
+{
+public:
+    std::function<void()> onClick;
+    juce::String text;
+    juce::Justification just { juce::Justification::centredRight };
+    void paint (juce::Graphics& g) override { label (g, text, getLocalBounds(), 13.0f, isMouseOver() ? col::ink : col::teal, just); }
+    void mouseEnter (const juce::MouseEvent&) override { repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { repaint(); }
+    void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
 };
 
 } // namespace backtrack::ui
